@@ -1,0 +1,159 @@
+type element. (*element in finite field or group*)
+type attribute.
+free Sec:channel [private].		(*secure channel*)
+free Pub:channel.			(*public channel*)
+
+
+(*-------Names & Variables-------*)
+(*elements of cyclic group*)
+const g:element.
+const g2:element.
+
+(*1 . master public key*)
+free Tpub:element.
+
+(*2. VehicleA & attributes & Each vehicle identity contains four attributes *)
+free WA:bitstring.
+free deltaA1:attribute.
+free deltaA2:attribute.
+free deltaA3:attribute.
+
+
+(*3. VehicleB & attributes*)
+free WB:bitstring.
+free deltaB1:attribute.
+free deltaB2:attribute.
+free deltaB3:attribute.
+
+
+
+(*4. master secret key*)
+free y:element [private].
+
+(*5. vehicles' private key*)
+free DA:element [private].
+free dA:element [private].
+free DB:element [private].
+free dB:element [private].
+
+(*6. session key*)
+free sessionKey:bitstring [private].
+free sessionKey':bitstring [private].
+
+(*-------Constructors, Destructors & Equations------*)
+fun identityCompose(attribute,attribute,attribute):bitstring.
+fun H1(bitstring,bitstring):element.
+fun H3(bitstring,bitstring,element,element,element):bitstring.
+
+fun concat(element,element,element):element.
+fun pairing(element,element):element.  (*Pairing operation:e(g,g)*)
+fun Mult(element,element):element.  (*Multiplication in group: G×G*)
+fun Add(element,element):element.	 (*Addition*)
+fun Powzn(element,element):element. 	(*g^s:Powzn(g,s)*)
+fun T(attribute):element.
+fun Attrcheck(bitstring,element,element,element,element,element,bitstring):element.
+fun q1(attribute):element.
+fun q2(attribute):element.
+fun Negative(element):element.
+equation forall a:element; Negative(Negative(a))=a.
+(*Event*)
+event beginVehicleA(bitstring).
+event endVehicleA(bitstring).
+event beginVehicleB(bitstring).
+event endVehicleB(bitstring).
+
+(*Queries*)
+query attacker(sessionKey).
+query attacker(sessionKey').
+query id:bitstring; inj-event (endVehicleA(id)) ==> inj-event(beginVehicleA(id)).
+query id:bitstring; inj-event (endVehicleB(id)) ==> inj-event(beginVehicleB(id)).
+
+(*Processes*)
+(*KGC Processes*)
+let VehicleAReg=
+	in(Sec,(deltaA1:attribute,deltaA2:attribute,deltaA3:attribute));
+	let WA = identityCompose(deltaA1,deltaA2,deltaA3) in
+	new rA1:element;
+	new rA2:element;
+	new rA3:element;
+	let DA = concat(	Mult(Powzn(g2,q1(deltaA1)),Powzn(T(deltaA1),rA1)),
+			Mult(Powzn(g2,q1(deltaA2)),Powzn(T(deltaA2),rA2)),
+			Mult(Powzn(g2,q1(deltaA2)),Powzn(T(deltaA2),rA2))	) in
+	let dA = concat(	Powzn(g,Negative(rA1)),
+			Powzn(g,Negative(rA1)),
+			Powzn(g,Negative(rA1))	) in 
+							
+	out(Sec,(WA,DA,dA));
+	0.
+
+let VehicleBReg=
+	in(Sec,(deltaB1:attribute,deltaB2:attribute,deltaB3:attribute));
+	let WB = identityCompose(deltaB1,deltaB2,deltaB3) in
+	new rB1:element;
+	new rB2:element;
+	new rB3:element;
+	let DB = concat(	Mult(Powzn(g2,q2(deltaB1)),Powzn(T(deltaB1),rB1)),
+			Mult(Powzn(g2,q2(deltaB2)),Powzn(T(deltaB2),rB2)),
+			Mult(Powzn(g2,q2(deltaB2)),Powzn(T(deltaB2),rB2))	) in
+	let dB = concat(	Powzn(g,Negative(rB1)),
+			Powzn(g,Negative(rB1)),
+			Powzn(g,Negative(rB1))	) in 
+							
+	out(Sec,(WB,DB,dB));
+	0.
+let KGC=VehicleAReg | VehicleBReg.
+
+
+(*VehicleA Processes*)
+let VehicleA=
+	(*Registration*)
+	out(Sec,(deltaA1,deltaA2,deltaA3));
+	in(Sec,(WA:bitstring,DA:element,dA:element));
+	(*Login & Authentication*)
+	event beginVehicleA(WA);
+	new alphaA:element;
+	new betaA:element;
+	new sA:element;
+	new TA:bitstring;
+	let A0 = H1(WA,TA) in
+	let A1 = Add(alphaA,Mult(betaA,A0)) in
+	let MA = Mult(Mult(DA,Powzn(g,sA)),Powzn(g2,Negative(alphaA))) in
+	let NA = dA in
+	let ZA = Powzn(g2,betaA) in 
+	let CA = Mult(Powzn(g,Negative(sA)),Powzn(g2,Negative(betaA))) in
+	out(Pub,(WA,A1,MA,NA,CA,ZA,TA));
+	in(Pub,(WB:bitstring,B1:element,MB:element,NB:element,CB:element,ZB:element,TB:bitstring));
+	let verifyResultA = Attrcheck(WB,B1,MB,NB,CB,ZB,TB) in
+	if(verifyResultA = Tpub) then
+	let SK = H3(WA,WB,ZA,ZB,Powzn(ZB,betaA)) in
+	event endVehicleA(WA)
+	else 0.
+(*VehicleB Processes*)
+let VehicleB=
+	(*Registration*)
+	out(Sec,(deltaB1,deltaB2,deltaB3));
+	in(Sec,(WB:bitstring,DB:element,dB:element));
+	(*login & Authentication*)
+	event beginVehicleB(WB);
+	in(Pub,(WA:bitstring,A1:element,MA:element,NA:element,CA:element,ZA:element,TA:bitstring));
+	let verifyResultB = Attrcheck(WA,A1,MA,NA,CA,ZA,TA) in
+	if(verifyResultB = Tpub) then
+	new alphaB:element;
+	new betaB:element;
+	new sB:element;
+	new TB:bitstring;
+	let B0 = H1(WB,TB) in
+	let B1 = Add(alphaB,Mult(betaB,B0)) in
+	let MB = Mult(Mult(DB,Powzn(g,sB)),Powzn(g2,Negative(alphaB))) in
+	let NB = dB in
+	let ZB = Powzn(g2,betaB) in 
+	let CB = Mult(Powzn(g,Negative(sB)),Powzn(g2,Negative(betaB))) in
+
+	let sessionKey' = H3(WA,WB,ZA,ZB,Powzn(ZA,betaB)) in
+	out(Pub,(WB,B1,MB,NB,CB,ZB,TB));
+	event endVehicleB(WB)
+	else 0.
+
+(*Processes Replication*)
+process 
+(!VehicleA | !VehicleB | !KGC)
